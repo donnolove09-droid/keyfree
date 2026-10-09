@@ -1,0 +1,149 @@
+<script>
+    function getDeviceId() {
+        let deviceId = localStorage.getItem('device_id');
+        if (deviceId) return deviceId;
+
+        const fingerprint = [
+            navigator.userAgent,
+            navigator.language,
+            screen.width + 'x' + screen.height,
+            screen.colorDepth,
+            new Date().getTimezoneOffset(),
+            navigator.hardwareConcurrency || 'unknown',
+            navigator.platform || 'unknown'
+        ].join('|');
+
+        let hash = 0;
+        for (let i = 0; i < fingerprint.length; i++) {
+            const char = fingerprint.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash;
+        }
+        deviceId = 'DEV_' + Math.abs(hash).toString(36).toUpperCase();
+        localStorage.setItem('device_id', deviceId);
+        return deviceId;
+    }
+
+    const getKeyBtn = document.getElementById('getKeyBtn');
+    const loading = document.getElementById('loading');
+    const keysList = document.getElementById('keysList');
+    const limitInfo = document.getElementById('limitInfo');
+    const remainCount = document.getElementById('remainCount');
+    const limitWarning = document.getElementById('limitWarning');
+
+    let currentRemaining = 2;
+
+    function updateUI() {
+        remainCount.textContent = currentRemaining;
+
+        limitInfo.classList.remove('low', 'empty');
+        if (currentRemaining === 0) limitInfo.classList.add('empty');
+        else if (currentRemaining === 1) limitInfo.classList.add('low');
+
+        if (currentRemaining <= 0) {
+            getKeyBtn.disabled = true;
+            getKeyBtn.textContent = 'ĐÃ HẾT LƯỢT';
+            limitWarning.classList.add('show');
+        } else {
+            getKeyBtn.disabled = false;
+            getKeyBtn.textContent = 'GET KEY';
+            limitWarning.classList.remove('show');
+        }
+    }
+
+    function displayNewKey(key) {
+        keysList.classList.add('show');
+        keysList.innerHTML = `
+            <div class="key-item">
+                <div class="key-info">
+                    <div class="key-label">🔑 Key vừa nhận</div>
+                    <div class="key-value">${key}</div>
+                </div>
+                <button class="copy-btn" data-key="${key}">COPY</button>
+            </div>
+        `;
+        const btn = keysList.querySelector('.copy-btn');
+        btn.addEventListener('click', () => copyToClipboard(key, btn));
+    }
+
+    function copyToClipboard(text, btn) {
+        const done = () => {
+            const original = btn.textContent;
+            btn.textContent = '✓ ĐÃ COPY';
+            btn.classList.add('copied');
+            setTimeout(() => {
+                btn.textContent = original;
+                btn.classList.remove('copied');
+            }, 1500);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
+        } else {
+            fallbackCopy(text, done);
+        }
+    }
+
+    function fallbackCopy(text, done) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); done(); } catch {}
+        document.body.removeChild(ta);
+    }
+
+    async function checkDevice() {
+        try {
+            const deviceId = getDeviceId();
+            const res = await fetch(`/api/check-device?device_id=${encodeURIComponent(deviceId)}`);
+            const data = await res.json();
+            if (data.success) {
+                currentRemaining = data.remaining;
+                updateUI();
+            }
+        } catch (err) {
+            console.error('Check device error:', err);
+        }
+    }
+
+    getKeyBtn.addEventListener('click', async () => {
+        if (currentRemaining <= 0) return;
+
+        loading.classList.add('show');
+        getKeyBtn.disabled = true;
+        getKeyBtn.textContent = 'ĐANG LẤY...';
+
+        try {
+            const deviceId = getDeviceId();
+            const res = await fetch(`/api/get-key?device_id=${encodeURIComponent(deviceId)}`);
+            const data = await res.json();
+
+            loading.classList.remove('show');
+
+            if (data.error) {
+                if (data.error === 'Đã hết lượt') {
+                    currentRemaining = 0;
+                    updateUI();
+                    return;
+                }
+                alert('⚠️ ' + data.error);
+                updateUI();
+                return;
+            }
+
+            if (data.success && data.key) {
+                currentRemaining = data.remaining;
+                displayNewKey(data.key);
+                updateUI();
+            }
+        } catch (err) {
+            loading.classList.remove('show');
+            alert('⚠️ Lỗi kết nối: ' + err.message);
+            updateUI();
+        }
+    });
+
+    checkDevice();
+</script>
